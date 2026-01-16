@@ -8,15 +8,21 @@ import {
   COMPANY_PROFILE_WIDGET_CONFIG,
   COMPANY_FINANCIALS_WIDGET_CONFIG,
 } from '@/lib/constants';
-import { isInWatchlist } from '@/lib/actions/watchlist.actions';
+import { getUserWatchlist } from '@/lib/actions/watchlist.actions';
+import { getStockDetails } from '@/lib/actions/finnhub.actions';
 
 const StockDetails = async ({ params }: StockDetailsPageProps) => {
   const { symbol } = await params;
   const upperSymbol = symbol.toUpperCase();
-  const isInWatchlistStatus = await isInWatchlist(upperSymbol);
   
-  // Use symbol as company name fallback - can be enhanced later with API call
-  const company = upperSymbol;
+  // Fetch stock details and watchlist in parallel
+  const [stockData, watchlist] = await Promise.all([
+    getStockDetails(upperSymbol),
+    getUserWatchlist(),
+  ]);
+
+  const company = stockData?.company || upperSymbol;
+  const isInWatchlistStatus = watchlist.some(item => item.symbol === upperSymbol);
 
   const scriptUrl = 'https://s3.tradingview.com/external-embedding/embed-widget-';
 

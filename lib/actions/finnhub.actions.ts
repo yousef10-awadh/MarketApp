@@ -137,6 +137,52 @@ async function getGeneralNews(): Promise<MarketNewsArticle[]> {
 }
 
 //! search for socks
+export const getStockDetails = async (symbol: string): Promise<{
+  company: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  marketCap: number;
+  peRatio: number | null;
+} | null> => {
+  try {
+    const token = process.env.FINNHUB_API_KEY ?? NEXT_PUBLIC_FINNHUB_API_KEY;
+    if (!token) {
+      console.error('FINNHUB API key is not configured');
+      return null;
+    }
+
+    const upperSymbol = symbol.toUpperCase();
+
+    // Fetch quote, profile, and financials in parallel
+    const [quoteData, profileData, financialsData] = await Promise.all([
+      fetchJSON<any>(`${FINNHUB_BASE_URL}/quote?symbol=${encodeURIComponent(upperSymbol)}&token=${token}`, 60).catch(() => null),
+      fetchJSON<any>(`${FINNHUB_BASE_URL}/stock/profile2?symbol=${encodeURIComponent(upperSymbol)}&token=${token}`, 3600).catch(() => null),
+      fetchJSON<any>(`${FINNHUB_BASE_URL}/stock/metric?symbol=${encodeURIComponent(upperSymbol)}&metric=all&token=${token}`, 3600).catch(() => null),
+    ]);
+
+    const company = profileData?.name || upperSymbol;
+    const currentPrice = quoteData?.c || 0;
+    const previousClose = quoteData?.pc || currentPrice;
+    const change = currentPrice - previousClose;
+    const changePercent = previousClose !== 0 ? ((change / previousClose) * 100) : 0;
+    const marketCap = profileData?.marketCapitalization || 0;
+    const peRatio = financialsData?.metric?.peNormalizedAnnual || financialsData?.metric?.peAnnual || null;
+
+    return {
+      company,
+      price: currentPrice,
+      change,
+      changePercent,
+      marketCap,
+      peRatio: peRatio !== null && peRatio !== undefined ? peRatio : null,
+    };
+  } catch (error) {
+    console.error('Error fetching stock details:', error);
+    return null;
+  }
+};
+
 export const searchStocks = cache(async (query?: string): Promise<StockWithWatchlistStatus[]> => {
   try {
     const token = process.env.FINNHUB_API_KEY ?? NEXT_PUBLIC_FINNHUB_API_KEY;
@@ -192,6 +238,16 @@ export const searchStocks = cache(async (query?: string): Promise<StockWithWatch
       results = Array.isArray(data?.result) ? data.result : [];
     }
 
+    // Get watchlist symbols for the current user
+    const { getWatchlistSymbolsByEmail } = await import('@/lib/actions/watchlist.actions');
+    const { auth } = await import('@/lib/better-auth/auth');
+    const { headers } = await import('next/headers');
+    const session = await auth.api.getSession({ headers: await headers() });
+    const watchlistSymbols = session?.user?.email 
+      ? await getWatchlistSymbolsByEmail(session.user.email)
+      : [];
+    const watchlistSet = new Set(watchlistSymbols.map(s => s.toUpperCase()));
+
     const mapped: StockWithWatchlistStatus[] = results
       .map((r) => {
         const upper = (r.symbol || '').toUpperCase();
@@ -205,7 +261,7 @@ export const searchStocks = cache(async (query?: string): Promise<StockWithWatch
           name,
           exchange,
           type,
-          isInWatchlist: false,
+          isInWatchlist: watchlistSet.has(upper),
         };
         return item;
       })
